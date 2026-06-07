@@ -14,8 +14,18 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+try:
+    from flask import Flask, jsonify, make_response, request, send_file, send_from_directory
+except ImportError:
+    Flask = None
+    jsonify = None
+    make_response = None
+    request = None
+    send_file = None
+    send_from_directory = None
+
 ROOT = Path(__file__).resolve().parent
-DATA = ROOT / "data"
+DATA = Path(os.environ.get("DATA_DIR") or ("/tmp/mary-career-agent-data" if os.environ.get("VERCEL") else ROOT / "data"))
 UPLOADS = DATA / "uploads"
 OUTPUTS = DATA / "outputs"
 SESSIONS = DATA / "sessions"
@@ -800,6 +810,284 @@ def interview_pack(profile, job):
         ],
         "opening": f"你好，我对贵公司的{job.get('title')}很感兴趣。我有相关项目/实习经历，已根据岗位要求准备简历，期待进一步沟通。"
     }
+
+
+def make_upload_record(kind, original=None, content=b"", pasted_text=""):
+    record = {
+        "id": f"{kind}-{int(time.time() * 1000)}",
+        "kind": kind,
+        "originalName": None,
+        "storedName": None,
+        "text": pasted_text,
+        "links": extract_links(pasted_text),
+        "warnings": [],
+        "contentKind": classify_content(pasted_text),
+        "uploadedAt": now_text()
+    }
+    if original:
+        stored = f"{int(time.time() * 1000)}-{safe_name(original)}"
+        path = UPLOADS / stored
+        path.write_bytes(content)
+        parsed = extract_text(path, original)
+        if parsed.get("text"):
+            record["text"] = " ".join([pasted_text, parsed["text"]]).strip()
+        record.update({
+            "originalName": original,
+            "storedName": stored,
+            "fileType": parsed.get("fileType"),
+            "parser": parsed.get("parser"),
+            "links": sorted(set((record.get("links") or []) + parsed.get("links", []))),
+            "warnings": parsed.get("warnings", []),
+            "qrHints": parsed.get("qrHints", []),
+            "contentKind": classify_content(record.get("text", ""), original)
+        })
+    return record
+
+
+def build_flask_app():
+    if Flask is None:
+        return None
+    app = Flask(__name__)
+
+    def current_session_id():
+        sid = request.cookies.get("mary_session")
+        return sid or secrets.token_urlsafe(18)
+
+    def respond(payload, status=200, sid=None):
+        response = make_response(jsonify(payload), status)
+        response.set_cookie("mary_session", sid or current_session_id(), httponly=True, samesite="Lax", max_age=60 * 60 * 24 * 30)
+        return response
+
+    @app.get("/")
+    @app.get("/index.html")
+    def flask_index():
+        return send_from_directory(ROOT, "index.html")
+
+    @app.get("/styles.css")
+    @app.get("/app.js")
+    def flask_static():
+        return send_from_directory(ROOT, request.path.lstrip("/"))
+
+    @app.get("/api/state")
+    def flask_state():
+        sid = current_session_id()
+        return respond({"ok": True, "data": load_db(sid)}, sid=sid)
+
+    @app.get("/api/jobs")
+    def flask_jobs():
+        sid = current_session_id()
+        return respond({"ok": True, "jobs": match_jobs(load_db(sid), dict(request.args))}, sid=sid)
+
+    @app.get("/api/download")
+    def flask_download():
+        sid = current_session_id()
+        name = safe_name(request.args.get("file", ""))
+        path = outputs_dir(sid) / name
+        if not path.exists():
+            return respond({"ok": False, "error": "文件不存在"}, 404, sid=sid)
+        return send_file(path, mimetype="application/msword", as_attachment=True, download_name=name)
+
+    @app.post("/api/upload")
+    def flask_upload():
+        sid = current_session_id()
+        db = load_db(sid)
+        kind = request.form.get("kind") or "resume"
+        pasted_text = request.form.get("text") or ""
+        file_item = request.files.get("file")
+        record = make_upload_record(
+            kind,
+            file_item.filename if file_item else None,
+            file_item.read() if file_item else b"",
+            pasted_text
+        )
+        if kind == "resume":
+            old_resume = db.get("resume") or {}
+            old_stored = old_resume.get("storedName")
+            if old_stored:
+                old_path = uploads_dir(sid) / safe_name(old_stored)
+                if old_path.exists():
+                    try:
+                        old_path.unlink()
+                    except OSError:
+                        pass
+            if record.get("storedName"):
+                src = UPLOADS / safe_name(record["storedName"])
+                dst = uploads_dir(sid) / safe_name(record["storedName"])
+                if src.exists():
+                    shutil.move(str(src), str(dst))
+            db["resume"] = record
+            db["profile"] = None
+        else:
+            if record.get("storedName"):
+                src = UPLOADS / safe_name(record["storedName"])
+                dst = uploads_dir(sid) / safe_name(record["storedName"])
+                if src.exists():
+                    shutil.move(str(src), str(dst))
+            db.setdefault("portfolio", []).append(record)
+        save_db(db, sid)
+        return respond({"ok": True, "record": record}, sid=sid)
+
+    @app.post("/api/use-sample")
+    def flask_use_sample():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        old_resume = db.get("resume") or {}
+        old_stored = old_resume.get("storedName")
+        if old_stored:
+            old_path = uploads_dir(sid) / safe_name(old_stored)
+            if old_path.exists():
+                try:
+                    old_path.unlink()
+                except OSError:
+                    pass
+        text = payload.get("text") or ""
+        db["resume"] = {
+            "id": f"resume-{int(time.time() * 1000)}",
+            "kind": "resume",
+            "originalName": "示例简历",
+            "storedName": None,
+            "text": text,
+            "links": extract_links(text),
+            "warnings": [],
+            "contentKind": "resume",
+            "uploadedAt": now_text()
+        }
+        db["profile"] = None
+        save_db(db, sid)
+        return respond({"ok": True, "record": db["resume"]}, sid=sid)
+
+    @app.post("/api/profile")
+    def flask_profile():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        preferences = payload.get("preferences") or {}
+        resume_text_override = (payload.get("resumeText") or "").strip()
+        if resume_text_override:
+            current = db.get("resume") or {
+                "id": f"resume-{int(time.time() * 1000)}",
+                "kind": "resume",
+                "originalName": "粘贴文本简历",
+                "storedName": None,
+                "text": "",
+                "links": [],
+                "warnings": [],
+                "contentKind": "resume",
+                "uploadedAt": now_text()
+            }
+            existing_text = current.get("text") or ""
+            if resume_text_override not in existing_text:
+                current["text"] = " ".join([existing_text, resume_text_override]).strip()
+            current["links"] = sorted(set((current.get("links") or []) + extract_links(resume_text_override)))
+            current["contentKind"] = classify_content(current.get("text", ""), current.get("originalName", ""))
+            db["resume"] = current
+        profile = build_profile(db.get("resume"), db.get("portfolio", []), preferences)
+        profile = enhance_profile_with_llm(profile, profile.get("raw_text", ""), preferences)
+        db["profile"] = profile
+        save_db(db, sid)
+        return respond({"ok": True, "profile": profile}, sid=sid)
+
+    @app.post("/api/custom-job")
+    def flask_custom_job():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        text = (payload.get("text") or "").strip()
+        if not text:
+            return respond({"ok": False, "error": "请先粘贴岗位链接或 JD"}, 400, sid=sid)
+        is_link = text.startswith("http")
+        job = {
+            "id": f"custom-{int(time.time() * 1000)}",
+            "title": "用户提供链接岗位" if is_link else "用户粘贴 JD 岗位",
+            "company": "待确认公司",
+            "city": "待确认",
+            "source": "用户主动提供",
+            "method": "用户粘贴岗位链接或 JD",
+            "url": text if is_link else "#",
+            "updatedAt": now_text(),
+            "postedAt": "待确认",
+            "trust": "中" if is_link else "待确认",
+            "status": "需跳转原链接校验" if is_link else "JD 文本完整性待确认",
+            "intensity": "待确认",
+            "keywords": keyword_hits(text, ["产品", "运营", "数据", "分析", "用户", "内容", "市场", "设计", "前端", "后端"]) or ["岗位要求", "项目经历", "技能匹配"],
+            "jd": text[:600]
+        }
+        db.setdefault("custom_jobs", []).append(job)
+        save_db(db, sid)
+        return respond({"ok": True, "job": job}, sid=sid)
+
+    @app.post("/api/optimize")
+    def flask_optimize():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        job_id = payload.get("jobId")
+        job = next((j for j in all_jobs(db) if j.get("id") == job_id), None) or match_jobs(db)[0]
+        resume_text = (db.get("resume") or {}).get("text", "")
+        fallback_lines = optimized_resume_from_original(resume_text, db.get("profile"), job)
+        fallback_advice = build_resume_advice(db.get("profile"), job, resume_text)
+        lines, advice = enhance_resume_with_llm(db.get("profile"), job, resume_text, fallback_lines, fallback_advice)
+        body = resume_lines_to_html(lines, (db.get("profile") or {}).get("name"))
+        file_name = write_doc(body, sid)
+        return respond({"ok": True, "html": body, "advice": advice, "download": f"/api/download?file={file_name}", "fileName": file_name}, sid=sid)
+
+    @app.post("/api/save-job")
+    def flask_save_job():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        job_id = payload.get("jobId")
+        job = next((j for j in all_jobs(db) if j.get("id") == job_id), None)
+        if not job:
+            return respond({"ok": False, "error": "岗位不存在"}, 404, sid=sid)
+        saved = db.setdefault("saved_jobs", [])
+        if not any(item.get("jobId") == job_id for item in saved):
+            saved.append({"jobId": job_id, "status": "感兴趣", "savedAt": now_text(), "job": job})
+        save_db(db, sid)
+        return respond({"ok": True, "savedJobs": saved}, sid=sid)
+
+    @app.post("/api/update-job-status")
+    def flask_update_job_status():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        job_id = payload.get("jobId")
+        status = payload.get("status")
+        if status not in KANBAN_STATUSES:
+            return respond({"ok": False, "error": "状态不合法"}, 400, sid=sid)
+        for item in db.setdefault("saved_jobs", []):
+            if item.get("jobId") == job_id:
+                item["status"] = status
+                item["updatedAt"] = now_text()
+        save_db(db, sid)
+        return respond({"ok": True, "savedJobs": db.get("saved_jobs", [])}, sid=sid)
+
+    @app.post("/api/delete-saved-job")
+    def flask_delete_saved_job():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        job_id = payload.get("jobId")
+        db["saved_jobs"] = [item for item in db.get("saved_jobs", []) if item.get("jobId") != job_id]
+        save_db(db, sid)
+        return respond({"ok": True, "savedJobs": db.get("saved_jobs", [])}, sid=sid)
+
+    @app.post("/api/interview")
+    def flask_interview():
+        sid = current_session_id()
+        db = load_db(sid)
+        payload = request.get_json(silent=True) or {}
+        job_id = payload.get("jobId")
+        job = next((j for j in all_jobs(db) if j.get("id") == job_id), None)
+        if not job:
+            return respond({"ok": False, "error": "请先选择看板中的岗位"}, 404, sid=sid)
+        return respond({"ok": True, "pack": interview_pack(db.get("profile"), job)}, sid=sid)
+
+    return app
+
+
+app = build_flask_app()
 
 
 class Handler(SimpleHTTPRequestHandler):
