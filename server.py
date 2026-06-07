@@ -8,11 +8,13 @@ import shutil
 import subprocess
 import time
 import urllib.request
+import zipfile
 from email import policy
 from email.parser import BytesParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from xml.etree import ElementTree as ET
 
 try:
     from flask import Flask, jsonify, make_response, request, send_file, send_from_directory
@@ -23,6 +25,11 @@ except ImportError:
     request = None
     send_file = None
     send_from_directory = None
+
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("DATA_DIR") or ("/tmp/mary-career-agent-data" if os.environ.get("VERCEL") else ROOT / "data"))
@@ -220,6 +227,44 @@ def text_from_doc_with_textutil(path):
         return ""
 
 
+def text_from_docx(path):
+    try:
+        with zipfile.ZipFile(path) as archive:
+            xml = archive.read("word/document.xml")
+        root = ET.fromstring(xml)
+        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+        paragraphs = []
+        for paragraph in root.findall(".//w:p", ns):
+            texts = [node.text or "" for node in paragraph.findall(".//w:t", ns)]
+            line = "".join(texts).strip()
+            if line:
+                paragraphs.append(line)
+        return "\n".join(paragraphs)
+    except Exception:
+        return ""
+
+
+def text_from_pdf(path):
+    if PdfReader is None:
+        return ""
+    try:
+        reader = PdfReader(str(path))
+        pages = []
+        for page in reader.pages[:8]:
+            pages.append(page.extract_text() or "")
+        return "\n".join(pages).strip()
+    except Exception:
+        return ""
+
+
+def text_from_rtf(path):
+    raw = path.read_text(encoding="utf-8", errors="ignore")
+    raw = re.sub(r"\\'[0-9a-fA-F]{2}", "", raw)
+    raw = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", raw)
+    raw = re.sub(r"[{}]", "", raw)
+    return raw.strip()
+
+
 def extract_text(path, original_name):
     ext = Path(original_name).suffix.lower().strip(".")
     result = {
@@ -227,22 +272,38 @@ def extract_text(path, original_name):
         "parser": "none",
         "warnings": [],
         "links": [],
-        "qr_hints": [],
-        "file_type": ext or "unknown"
+        "qrHints": [],
+        "fileType": ext or "unknown"
     }
     if ext in ("txt", "md", "csv"):
         result["text"] = path.read_text(encoding="utf-8", errors="ignore")
         result["parser"] = "plain-text"
-    elif ext in ("doc", "docx", "rtf", "pdf"):
+    elif ext == "docx":
+        text = text_from_docx(path) or text_from_doc_with_textutil(path)
+        result["text"] = text
+        result["parser"] = "docx-xml" if text else "parser-unavailable"
+        if not text:
+            result["warnings"].append("暂未提取到 Word 文本。可在下方文本框粘贴简历正文继续。")
+    elif ext == "pdf":
+        text = text_from_pdf(path) or text_from_doc_with_textutil(path)
+        result["text"] = text
+        result["parser"] = "pypdf" if text else "parser-unavailable"
+        if not text:
+            result["warnings"].append("暂未提取到文本。扫描版 PDF 或复杂 Word 可通过 OCR/文档解析服务增强。")
+    elif ext == "rtf":
+        text = text_from_rtf(path) or text_from_doc_with_textutil(path)
+        result["text"] = text
+        result["parser"] = "rtf-text" if text else "parser-unavailable"
+    elif ext == "doc":
         text = text_from_doc_with_textutil(path)
         result["text"] = text
         result["parser"] = "macos-textutil" if text else "parser-unavailable"
         if not text:
-            result["warnings"].append("暂未提取到文本。扫描版 PDF 或复杂 Word 可通过 OCR/文档解析服务增强。")
+            result["warnings"].append("旧版 DOC 暂未提取到文本。建议另存为 DOCX/PDF，或在下方文本框粘贴正文继续。")
     elif ext in ("jpg", "jpeg", "png", "webp", "heic"):
         result["parser"] = "ocr-adapter"
         result["warnings"].append("图片已上传。当前本地环境未安装 OCR 引擎，正式版会接入 OCR 和二维码识别服务。")
-        result["qr_hints"].append("若图片中含二维码，正式版会解析作品集链接；当前可手动粘贴链接兜底。")
+        result["qrHints"].append("若图片中含二维码，正式版会解析作品集链接；当前可手动粘贴链接兜底。")
     else:
         result["warnings"].append("文件格式暂不支持自动解析，请上传 Word、PDF、图片，或粘贴文本。")
 
@@ -1194,8 +1255,8 @@ class Handler(SimpleHTTPRequestHandler):
                 "links": sorted(set(parsed.get("links", []) + extract_links(pasted_text))),
                 "warnings": parsed.get("warnings", []),
                 "parser": parsed.get("parser"),
-                "fileType": parsed.get("file_type"),
-                "qrHints": parsed.get("qr_hints", []),
+                "fileType": parsed.get("fileType"),
+                "qrHints": parsed.get("qrHints", []),
                 "contentKind": classify_content(merged_text, original)
             })
         if kind == "resume":

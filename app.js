@@ -469,15 +469,31 @@ async function generateProfile() {
     status("resumeStatus", `后端画像暂不可用，已使用前端兜底画像：${error.message}`, "warn");
   }
   const text = `${state.resume.text} ${$("#portfolioText").value}`;
+  const prefs = getPreferences();
   const links = extractLinks(text);
   const hasPortfolio = state.portfolio.length > 0 || links.length > 0;
+  const preferredTarget = prefs.roles.length
+    ? prefs.roles.slice(0, 3).join(" / ")
+    : text.includes("数据")
+      ? "运营 / 数据分析 / 产品运营"
+      : "用户运营 / 内容运营 / 产品运营";
+  const detectedStrengths = [
+    text.includes("社群") ? "社群运营" : "",
+    text.includes("活动") ? "活动策划" : "",
+    text.includes("用户") ? "用户反馈整理" : "",
+    text.includes("内容") ? "内容表达" : "",
+    text.includes("数据") || text.includes("Excel") ? "基础数据分析" : "",
+    ...prefs.roles,
+    ...prefs.traits
+  ].filter(Boolean);
   state.profile = {
     name: state.hideName ? "" : (displayableName(state.preferredName) || inferClientName(text)),
-    target: text.includes("数据") ? "运营 / 数据分析 / 产品运营" : "用户运营 / 内容运营 / 产品运营",
-    strengths: ["社群运营", "活动策划", "用户反馈整理", "内容表达", "基础数据分析"],
+    target: preferredTarget,
+    strengths: [...new Set(detectedStrengths)].slice(0, 8),
     risks: ["部分经历缺少量化结果", "技能深度需要结合目标岗位确认", "如 OCR 识别不完整需手动补充"],
     portfolio: hasPortfolio ? links : [],
-    completeness: hasPortfolio ? 86 : 76
+    preferences: prefs,
+    completeness: Math.min(96, (hasPortfolio ? 80 : 70) + Math.min(prefs.roles.length + prefs.cities.length + prefs.intensity.length + prefs.traits.length, 8))
   };
   applyProfileToUI(state.profile);
   return true;
@@ -486,12 +502,18 @@ async function generateProfile() {
 function scoreJob(job) {
   const prefs = getPreferences();
   const resumeText = `${state.resume?.text || ""} ${$("#resumeText").value}`.toLowerCase();
+  const profileText = `${state.profile?.target || ""} ${(state.profile?.strengths || []).join(" ")} ${(state.profile?.skills || []).join(" ")}`.toLowerCase();
   let score = 48;
-  const matchedKeywords = job.keywords.filter((key) => resumeText.includes(key.toLowerCase()) || state.profile?.strengths.some((s) => key.includes(s) || s.includes(key)));
+  const matchedKeywords = job.keywords.filter((key) => resumeText.includes(key.toLowerCase()) || profileText.includes(key.toLowerCase()) || state.profile?.strengths?.some((s) => key.includes(s) || s.includes(key)));
   score += matchedKeywords.length * 7;
+  const targetTokens = `${state.profile?.target || ""}`.split(/[ /、]+/).filter(Boolean);
+  if (targetTokens.some((token) => job.title.includes(token) || job.jd.includes(token))) score += 10;
   if (prefs.cities.some((city) => job.city.includes(city) || city.includes(job.city) || city.includes("全国"))) score += 10;
-  if (prefs.roles.some((role) => job.title.includes(role) || job.jd.includes(role))) score += 8;
+  if (prefs.roles.some((role) => job.title.includes(role) || job.jd.includes(role) || job.keywords.some((key) => key.includes(role) || role.includes(key)))) score += 14;
   if (prefs.intensity.some((item) => job.intensity.includes(item) || item.includes(job.intensity))) score += 6;
+  if (prefs.traits.some((trait) => job.jd.includes(trait) || job.title.includes(trait))) score += 3;
+  if ((prefs.mbti || "").toUpperCase().startsWith("E") && /沟通|用户|社群|活动/.test(job.jd)) score += 3;
+  if ((prefs.mbti || "").toUpperCase().startsWith("I") && /数据|分析|流程|研究/.test(job.jd)) score += 3;
   if (state.profile?.portfolio?.length) score += 3;
   if (job.trust === "高") score += 4;
   return Math.min(96, Math.max(48, score));
