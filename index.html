@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mary 的大学生求职智能体</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="errorBanner" class="error-banner" hidden>
+      页面脚本加载遇到问题。请刷新页面；如果仍出现，请确认 index.html、styles.css、app.js 在同一文件夹内。
+    </div>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div class="brand-copy">
+            <p>Mary</p>
+            <h1>大学生求职智能体</h1>
+          </div>
+        </div>
+        <nav class="steps" aria-label="Demo 流程">
+          <button class="step active" data-step="upload"><span>1</span>上传与识别</button>
+          <button class="step" data-step="profile"><span>2</span>画像与偏好</button>
+          <button class="step" data-step="jobs"><span>3</span>岗位匹配</button>
+          <button class="step" data-step="optimize"><span>4</span>简历优化</button>
+          <button class="step" data-step="tracker"><span>5</span>投递管理</button>
+        </nav>
+        <div class="trust-box">
+          <p class="box-title">可信原则</p>
+          <p>岗位必须展示来源、更新时间、原始链接和可信度。AI 只优化表达，不编造经历。</p>
+        </div>
+      </aside>
+
+      <main class="app">
+        <section class="hero">
+          <div>
+            <h2>Mary帮你找到更适合你的机会</h2>
+            <p class="hero-copy">支持 Word、PDF、图片简历、作品集文件、作品集链接和二维码识别。即使文件不标准，也会给你可继续的路径</p>
+          </div>
+        </section>
+
+        <section id="upload" class="panel visible">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 1</p>
+              <h3>上传简历与作品集</h3>
+            </div>
+            <div class="head-actions">
+              <button class="ghost-btn" id="loadSample">使用示例简历体验</button>
+              <button class="primary-btn" id="goProfile">下一步：生成画像</button>
+            </div>
+          </div>
+
+          <div class="grid two">
+            <div class="upload-card">
+              <label for="resumeFile" class="drop-zone">
+                <span class="upload-icon">↑</span>
+                <strong>上传简历</strong>
+                <small>支持 DOC、DOCX、PDF、JPG、PNG，也可粘贴文本兜底</small>
+              </label>
+              <input id="resumeFile" type="file" accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.txt,.md" />
+              <textarea id="resumeText" placeholder="如果文件无法识别，或你只有网页版简历，可以把简历文本粘贴在这里。"></textarea>
+              <div class="status-list" id="resumeStatus"></div>
+            </div>
+
+            <div class="upload-card">
+              <label for="portfolioFile" class="drop-zone secondary">
+                <span class="upload-icon">＋</span>
+                <strong>上传作品集/补充材料（选填）</strong>
+                <small>有作品集可以上传；没有也不影响下一步。图片中如含二维码，将尝试识别作品集链接。</small>
+              </label>
+              <input id="portfolioFile" type="file" accept=".doc,.docx,.pdf,.jpg,.jpeg,.png,.txt,.md" multiple />
+              <textarea id="portfolioText" placeholder="也可以粘贴作品集链接、GitHub、Behance、Notion、飞书文档、个人网站等。"></textarea>
+              <div class="status-list" id="portfolioStatus"></div>
+            </div>
+          </div>
+
+          <div class="notice">
+            <strong>异常兜底：</strong>
+            如果上传的不是简历，系统会提示“作为补充材料保存 / 继续上传简历 / 手动填写信息 / 使用示例体验”，不会让流程中断。
+          </div>
+        </section>
+
+        <section id="profile" class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 2</p>
+              <h3>确认学生画像与可选偏好</h3>
+            </div>
+            <button class="primary-btn" id="analyzeProfile">生成/刷新画像</button>
+          </div>
+
+          <div class="profile-layout">
+            <div class="profile-card">
+              <div class="score-ring"><span id="profileCompleteness">72</span><small>% 完整</small></div>
+              <div>
+                <h4 id="candidateName">待生成画像</h4>
+                <p id="candidateSummary">上传简历或使用示例后，Mary 会提取教育背景、经历、技能、作品集和风险点。</p>
+              </div>
+            </div>
+            <div class="confidence-grid" id="confidenceGrid"></div>
+          </div>
+
+          <div class="grid two">
+            <div class="form-card">
+              <h4>可选偏好</h4>
+              <label>MBTI（选填，填空题）</label>
+              <input id="mbti" type="text" placeholder="例如 ENFP、ISTJ，也可以不填" />
+
+              <label>性格特征（可多选，也可自定义）</label>
+              <div class="chips" data-group="traits">
+                <button>外向沟通</button><button>细致稳健</button><button>逻辑分析</button><button>创意表达</button><button>执行力强</button><button>抗压强</button><button>喜欢协作</button><button>偏独立工作</button>
+              </div>
+              <input id="traitCustom" type="text" placeholder="补充性格特征，例如：喜欢快节奏、善于复盘" />
+
+              <label>意向 base 城市（可多选，也可自定义）</label>
+              <div class="chips" data-group="cities">
+                <button>北京</button><button>上海</button><button>深圳</button><button>广州</button><button>杭州</button><button>成都</button><button>南京</button><button>武汉</button><button>远程</button><button>全国均可</button>
+              </div>
+              <input id="cityCustom" type="text" placeholder="补充城市，例如：苏州、西安、香港" />
+            </div>
+
+            <div class="form-card">
+              <h4>求职目标</h4>
+              <label>工作强度偏好</label>
+              <div class="chips" data-group="intensity">
+                <button>稳定节奏</button><button>适中强度</button><button>高成长高强度</button><button>暂不确定</button>
+              </div>
+              <input id="intensityCustom" type="text" placeholder="补充说明，例如：能接受阶段性加班，但不希望长期 996" />
+
+              <label>岗位方向偏好</label>
+              <div class="chips" data-group="roles">
+                <button>产品</button><button>运营</button><button>市场</button><button>数据分析</button><button>前端</button><button>后端</button><button>算法</button><button>设计</button><button>HR</button><button>管培</button>
+              </div>
+              <input id="roleCustom" type="text" placeholder="补充岗位方向，例如：用户研究、商业分析、内容策略" />
+
+              <label>求职模式</label>
+              <select id="goalMode">
+                <option>我还不清楚适合什么岗位</option>
+                <option>我已经有目标岗位</option>
+                <option>我想冲刺大厂</option>
+                <option>我想提高简历通过率</option>
+                <option>我想找实习</option>
+                <option>我想找校招全职</option>
+              </select>
+            </div>
+          </div>
+          <div class="profile-actions">
+            <button class="primary-btn" id="goJobsFromProfile">下一步：岗位匹配</button>
+          </div>
+        </section>
+
+        <section id="jobs" class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 3</p>
+              <h3>搜索真实岗位并匹配</h3>
+            </div>
+            <button class="primary-btn" id="matchJobs">开始匹配</button>
+          </div>
+
+          <div class="source-banner">
+            <div>
+              <strong>招聘源接入策略</strong>
+              <p>BOSS 直聘、猎聘、脉脉优先走官方开放 API、授权接口或第三方招聘数据服务；企业官网岗位走公开页面合规采集；用户也可以主动粘贴岗位链接或 JD。</p>
+            </div>
+            <span>来自可信数据管道</span>
+          </div>
+
+          <div class="job-tools">
+            <input id="jobSearch" type="search" placeholder="搜索公司、岗位、城市、技能，例如：小红书 运营 上海" />
+            <select id="sourceFilter">
+              <option value="">全部来源</option>
+              <option>BOSS 直聘</option>
+              <option>猎聘</option>
+              <option>脉脉</option>
+              <option>企业官网</option>
+              <option>第三方数据服务</option>
+            </select>
+            <select id="trustFilter">
+              <option value="">全部可信度</option>
+              <option>高</option>
+              <option>中</option>
+              <option>待确认</option>
+            </select>
+          </div>
+
+          <div class="paste-jd">
+            <textarea id="customJd" placeholder="粘贴你感兴趣的岗位 JD 或岗位链接，Mary 会把它加入匹配列表并标记为“用户主动提供”。"></textarea>
+            <button class="ghost-btn" id="addCustomJob">加入自定义岗位</button>
+          </div>
+
+          <div class="job-grid" id="jobGrid"></div>
+          <aside class="detail-drawer" id="jobDetail" aria-live="polite"></aside>
+        </section>
+
+        <section id="optimize" class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 4</p>
+              <h3>简历诊断与一键优化</h3>
+            </div>
+            <button class="primary-btn" id="optimizeResume">一键优化并预览</button>
+          </div>
+
+          <div class="diagnosis">
+            <div>
+              <h4>分条优化建议</h4>
+              <div id="resumeAdvice" class="advice-list"></div>
+            </div>
+            <div>
+              <h4>优化预览</h4>
+              <div id="optimizedPreview" class="preview-box">选择一个岗位后点击“一键优化并预览”。系统会保留真实经历，只优化表达，并标记需要用户补充的数据。</div>
+              <button class="download-btn" id="downloadDoc" disabled>下载可编辑 DOC 简历</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="tracker" class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Step 5</p>
+              <h3>投递清单与面试准备</h3>
+            </div>
+            <div class="interview-actions">
+              <select id="interviewJobSelect" aria-label="选择生成面试准备包的岗位"></select>
+              <button class="ghost-btn" id="generateInterview">生成面试准备包</button>
+            </div>
+          </div>
+          <div class="kanban" id="kanban"></div>
+          <div class="board-detail" id="boardDetail" hidden></div>
+          <div class="interview-box" id="interviewBox">收藏岗位后，可生成自我介绍、项目追问、面试问题和 BOSS/邮件开场语。</div>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="nameDialog" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="nameDialogTitle">
+        <p class="eyebrow">称呼确认</p>
+        <h3 id="nameDialogTitle">你希望 Mary 如何称呼你？</h3>
+        <p>这个称呼会用于画像、简历预览和面试准备包。也可以先不填写，后续页面会自动隐藏姓名。</p>
+        <input id="preferredNameInput" type="text" maxlength="20" placeholder="例如：李美伶、小王、Mary" />
+        <div class="modal-actions">
+          <button class="ghost-btn" id="skipPreferredName">暂不显示姓名</button>
+          <button class="primary-btn" id="savePreferredName">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.addEventListener("error", function () {
+        var banner = document.getElementById("errorBanner");
+        if (banner) banner.hidden = false;
+      });
+    </script>
+    <script src="./app.js"></script>
+  </body>
+</html>

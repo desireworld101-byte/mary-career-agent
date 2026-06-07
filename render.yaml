@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: mary-career-agent
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python3 server.py"
+    envVars:
+      - key: DEEPSEEK_MODEL
+        value: deepseek-chat
+      - key: DEEPSEEK_BASE_URL
+        value: https://api.deepseek.com/chat/completions
+      - key: DEEPSEEK_API_KEY
+        sync: false
